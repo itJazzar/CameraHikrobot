@@ -7,6 +7,8 @@ using System.Net.Sockets;
 using System.Threading;
 using System.CodeDom;
 using System.Text.RegularExpressions;
+using System.Net;
+
 
 namespace Camera_Hikrobot
 {
@@ -19,7 +21,7 @@ namespace Camera_Hikrobot
         private Regex codeRegex;
         public string CodeRegexPattern { get; set; }
         public event EventHandler<string> Error;
-        public event EventHandler<string> SingleCodeChanged;
+        public event EventHandler<string> SingleCodeChanged; // CodeRead - одно событие которое возвращает камРезалт. камРезалт хранит массив кодов
         public event EventHandler<string[]> GroupCodeChanged;
 
 
@@ -33,12 +35,13 @@ namespace Camera_Hikrobot
 
         public static void SingleCodeChangedHandler(object sender, string code)
         {
-            Console.WriteLine($"Парсер отработал.");
+            int i  = 1;
+            Console.WriteLine($"Получен {i}-й код: {code}\");");
         }
 
         public static void ErrorHandler(object sender, string code)
         {
-            //Console.WriteLine($"Событие CodeChanged: {code}");
+            Console.WriteLine($"Error событие");
         }
         public static void GroupCodeChangedHandler(object sender, string code)
         {
@@ -57,6 +60,7 @@ namespace Camera_Hikrobot
         //        Task.Delay(100).Wait();
         //    }
         //}
+
         public void SetCodeRegex(string pattern)
         {
             CodeRegexPattern = pattern;
@@ -72,16 +76,34 @@ namespace Camera_Hikrobot
                     return true;
                 }
 
-                _tcpClient = new TcpClient(ipAddress, port);
-                _tcpClient.ReceiveTimeout = timeoutMilliseconds;
-                //_tcpClient.Connect(ipAddress, port);
-
-                if (_networkStream != null)
+                if (port < 0 || port > 65536 || !IPAddress.TryParse(ipAddress, out IPAddress _))
                 {
-                    _networkStream.Dispose();
+                    Console.WriteLine("Некорректный IP адрес или порт.");
+                    return false;
                 }
 
-                _networkStream = _tcpClient.GetStream();
+                _tcpClient = new TcpClient();
+
+                var timer = new System.Timers.Timer(timeoutMilliseconds);
+
+                //timer.Elapsed += (sender, e) =>
+                //{
+                    
+                //    HandleError($"Таймаут при подключении к камере - {timeoutMilliseconds / 1000} сек.");
+                //};
+                //timer.AutoReset = false;
+                //timer.Start();
+
+                //_tcpClient.Connect(ipAddress, port);
+
+                //if (_networkStream != null)
+                //{
+                //    _networkStream.Dispose();
+                //}
+
+                //_networkStream = _tcpClient.GetStream();
+
+                //timer.Stop();
 
                 Console.WriteLine("Камера подключена.\n");
                 return true;
@@ -92,6 +114,8 @@ namespace Camera_Hikrobot
                 return false;
             }
         }
+
+
         public void Dispose()
         {
             try
@@ -104,7 +128,7 @@ namespace Camera_Hikrobot
                 if (_tcpClient != null)
                 {
                     _tcpClient.Close();
-                    Console.WriteLine("Отключение от камеры выполнено.");
+                    Console.WriteLine("Отключение...");
                 }
             }
             catch (Exception ex)
@@ -122,54 +146,65 @@ namespace Camera_Hikrobot
             byte[] buffer = new byte[1024];
             StringBuilder receivedDataBuffer = new StringBuilder();
 
-            while (true)
+            try
             {
-                int i = 1;
-                int bytesRead = await _networkStream.ReadAsync(buffer, 0, buffer.Length);
-                if (bytesRead > 0)
+                while (true)
                 {
-                    string receivedData = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                    receivedDataBuffer.Append(receivedData);
 
-                    int endIndex = receivedDataBuffer.ToString().IndexOf("___");
-
-                    if (endIndex != -1)
+                    if (_networkStream == null)
                     {
-                        string codesSubstring = receivedDataBuffer.ToString(0, endIndex);
-                        string[] codes = codesSubstring.Split(';');
+                        Console.WriteLine("networkStream is null. Соединение разорвано.");
+                        break;
+                    }
 
-                        Console.WriteLine("//////////Начало считывания//////////\n");
+                    int i = 1;
+                    int bytesRead = await _networkStream.ReadAsync(buffer, 0, buffer.Length);
+                    if (bytesRead > 0)
+                    {
+                        string receivedData = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                        receivedDataBuffer.Append(receivedData);
 
-                        if (_isSingleCamera)
+                        int endIndex = receivedDataBuffer.ToString().IndexOf("___");
+
+                        if (endIndex != -1)
                         {
-                            foreach (string code in codes)
+                            string codesSubstring = receivedDataBuffer.ToString(0, endIndex);
+                            string[] codes = codesSubstring.Split(';');
+
+                            if (_isSingleCamera)
                             {
-                                Match match = codeRegex.Match(code);
-                                if (match.Success)
+                                foreach (string code in codes)
                                 {
-                                    Codes.Enqueue(code);
-                                    Console.WriteLine($"Получен {i}-й код: {code}");
-                                    SingleCodeChanged?.Invoke(this, code);
+                                    Match match = codeRegex.Match(code);
+                                    if (match.Success)
+                                    {
+                                        Codes.Enqueue(code);
+                                        //Console.WriteLine($"Получен {i}-й код: {code}");
+                                        SingleCodeChanged?.Invoke(this, code);
+                                    }
+                                    else
+                                    {
+                                        //Console.WriteLine($"{i}-й код не распознан: Wrong Struct.");
+                                    }
+                                    i++;
                                 }
-                                else
-                                {
-                                    Console.WriteLine($"{i}-й код не распознан: Wrong Struct.");
-                                }
-                                i++;
                             }
-                        }
-                        else
-                        {
-                            GroupCodeChanged.Invoke(this, codes);
-                        }
+                            else
+                            {
+                                GroupCodeChanged.Invoke(this, codes);
+                            }
 
-                        receivedDataBuffer.Remove(0, endIndex + 3);
-                        Console.WriteLine("\n//////////Конец считывания//////////\n");
+                            receivedDataBuffer.Remove(0, endIndex + 3);
+                        }
                     }
                 }
-
+            }
+            catch (Exception ex)
+            {
+                HandleError($"Ошибка при считывании данных: {ex.Message}");
             }
         }
+        
         public string DequeueCode()
         {
             lock (Codes)
@@ -197,17 +232,20 @@ namespace Camera_Hikrobot
         static async Task Main(string[] args)
         {
             Camera cam = new Camera(true);
+
             cam.SingleCodeChanged += SingleCodeChangedHandler;
             cam.Error += ErrorHandler;
 
-
             cam.Connect("12.12.0.10", 2002, 2000);
+               
+
             cam.SetCodeRegex("^01\\d{14}215.{12}\u001d93.{4}$"); //Бутылки воды 
             //Task.Run(() => CheckCodes(cam));
 
             await cam.ReceiveDataAsync();
 
-            cam.Dispose();
+            //cam.Dispose();
+            Console.ReadKey();
         }
     }
 }
