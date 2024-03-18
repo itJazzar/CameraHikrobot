@@ -25,6 +25,7 @@ namespace Camera_Hikrobot
         private NetworkStream _networkStream;
         private Regex _codeRegex;
         private string _codeRegexPattern;
+        public CameraType CamType { get; set; }
         public bool IsSingleCamera { get; set; }
         public int CodesToRead { get; set; }
         public int Port { get; set; }
@@ -53,7 +54,11 @@ namespace Camera_Hikrobot
             _codeRegex = new Regex(CodeRegexPattern);
             CodesToRead = codesToRead;
         }
-
+        public enum CameraType
+        {
+            Hikrobot,
+            Datalogic
+        }
         public async Task<bool> Start()
         {
             if (_tcpClient != null && _tcpClient.Connected)
@@ -191,7 +196,23 @@ namespace Camera_Hikrobot
                                     }
                                 }
 
-                                GroupCodeCamResult.Invoke(this, camResult);
+                                try
+                                {
+                                    // Проверка, были ли успешно считаны все коды
+                                    if (camResult.ResultCodes.Count == CodesToRead)
+                                    {
+                                        // Все коды были успешно считаны
+                                        GroupCodeCamResult.Invoke(this, camResult);
+                                    }
+
+                                }
+                                catch (Exception ex)
+                                {
+                                    // Количество считанных кодов не соответствует CodesToRead
+                                    Console.WriteLine($"Количество считанных кодов не соответствует заданному {CodesToRead}.\nError: {ex}");
+                                }
+
+                                //GroupCodeCamResult.Invoke(this, camResult);
 
                                 for (int i = Math.Min(codes.Length, CodesToRead); i < codes.Length; i++)
                                 {
@@ -413,30 +434,37 @@ namespace Camera_Hikrobot
         {
             Camera cam = new Camera(); // Конструктор с параметрами по умолчанию
 
+            cam.CamType = CameraType.Hikrobot;
+            //cam.CamType = CameraType.Datalogic;
+
+            if (cam.CamType == CameraType.Hikrobot)
+                Console.WriteLine("Тип камеры: Hikrobot\n");
+            else
+                Console.WriteLine("Тип камеры: Datalogic\n");         
+
             cam.IpAddress = "12.12.0.10";
             cam.CodeRegexPattern = "^01\\d{14}215.{12}\u001d93.{4}$"; //Бутылки воды 
             cam.ConnectionTimeoutMSec = 2000;
             cam.IsSingleCamera = false;
-            cam.CodesToRead = 4;
+            cam.CodesToRead = 3;
             //cam.Port = 2001;
 
             if (!cam.IsSingleCamera)
-                Console.WriteLine($"Выбрана групповая камера. Количество кодов для считывания: {cam.CodesToRead}.");
+                Console.WriteLine($"Задана групповая камера. Количество кодов для считывания: {cam.CodesToRead}.");
             else
-                Console.WriteLine("Выбрана одиночная камера.");
+                Console.WriteLine("Задана одиночная камера.");
 
             cam.CodeRead += CodeReadHandler;
             cam.CodeCamResult += CodeCamResultHandler;
             cam.GroupCodeCamResult += GroupCodeCamResultHandler;
             cam.ConnectionException += CamExceptionHanlder;
 
-            //cam.PingCamera(5, 500, 1000);
-            //Thread.Sleep(10000);
-
             bool isConnected = await cam.Start();
 
             var keepAliveTask = cam.KeepAliveTask();
             var receiveDataTask = cam.ReceiveDataAsync();
+
+            //cam.PingCamera(10, 500, 1000);
 
             await Task.WhenAll(keepAliveTask, receiveDataTask);
 
