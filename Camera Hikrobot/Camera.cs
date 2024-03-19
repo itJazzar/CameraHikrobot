@@ -208,7 +208,6 @@ namespace Camera_Hikrobot
                                 }
                                 catch (Exception ex)
                                 {
-                                    // Количество считанных кодов не соответствует CodesToRead
                                     Console.WriteLine($"Количество считанных кодов не соответствует заданному {CodesToRead}.\nError: {ex}");
                                 }
 
